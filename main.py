@@ -56,7 +56,7 @@ async def lifespan(app: FastAPI):
     logger.info("[IntelliDocs Core] Shutdown complete.")
 
 
-app = FastAPI(title="IntelliDocs Engine Core", lifespan=lifespan)
+app = FastAPI(title="BhashaRAG Engine Core", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

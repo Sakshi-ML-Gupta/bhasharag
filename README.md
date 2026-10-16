@@ -1,4 +1,4 @@
-# IntelliDocs — Multilingual Grounded RAG
+# BhashaRAG — Multilingual Grounded RAG
 
 A retrieval-augmented generation (RAG) system that answers questions about a PDF
 in any of 22 Indic languages, with page-level citations. Combines **Chandra OCR**
@@ -45,7 +45,7 @@ IndicTrans2 translation → response in user's language
 
 ```bash
 # 1. Clone
-git clone https://github.com/YOUR_USERNAME/intellidocs.git
+git clone https://github.com/YOUR_USERNAME/BhashaRAG.git
 cd intellidocs
 
 # 2. Create venv
