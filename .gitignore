@@ -98,3 +98,5 @@ logs/
 *.bak
 *.tmp
 ~$*
+# IndicLID is cloned separately — see README
+IndicLID/
