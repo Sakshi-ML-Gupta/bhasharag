@@ -1,0 +1,100 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib60/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ---------- Virtual environments ----------
+venv/
+env/
+ENV/
+.venv/
+inteliidocs/
+.venv-datalab/
+
+# ---------- Environment / secrets ----------
+.env
+.env.local
+*.env
+!.env.example
+
+# ---------- Qdrant local DB ----------
+qdrant_local_db/
+qdrant_storage/
+*.sqlite
+
+# ---------- IndicLID models (large binaries) ----------
+IndicLID/models/
+IndicLID/.cache/
+IndicLID/__pycache__/
+
+# ---------- HuggingFace cache ----------
+.cache/
+hf-cache/
+D:/hf-cache/
+models--*/
+
+# ---------- Data / test artifacts ----------
+*.pdf
+!docs/**/*.pdf
+!sample-docs/**/*.pdf
+*.png
+*.jpg
+!docs/**/*.png
+!docs/**/*.jpg
+!static/**/*.png
+test_chunker.py
+test_chandra.py
+diagnose.py
+diagnose_retrival.py
+check_qdrant.py
+verify_index.py
+reindex.py
+probe_datalab.py
+
+# ---------- Node / frontend ----------
+intellidocs-frontend/node_modules/
+intellidocs-frontend/dist/
+intellidocs-frontend/.vite/
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.vite/
+
+# ---------- IDE ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Logs ----------
+*.log
+logs/
+
+# ---------- Misc ----------
+*.bak
+*.tmp
+~$*
