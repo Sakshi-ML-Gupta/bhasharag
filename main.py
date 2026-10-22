@@ -191,7 +191,7 @@ async def delete_session(session_id: str):
 @app.post("/api/v1/chat")
 async def process_grounded_query(
     query: str = Form(...),
-    lang: str = Form("en"),
+    lang: str = Form("auto"),  # Default changed to "auto"
     session_id: str = Form(None),
 ):
     if vector_manager is None or rag_engine is None or translator is None:
@@ -202,21 +202,26 @@ async def process_grounded_query(
         await mongo.create_session(session_id)
         logger.info(f"[/chat] auto-created session {session_id}")
 
-    logger.info(f"[/chat] session={session_id} lang={lang} query={query!r}")
+    # ----- STEP 0: AUTOMATIC LANGUAGE DETECTION -----
+    if lang == "auto":
+        lang = translator.detect_language(query)
+        logger.info(f"[/chat] Auto-detected language: {lang}")
+
+    logger.info(f"[/chat] session={session_id} final_lang={lang} query={query!r}")
 
     try:
         await mongo.save_message(session_id, "user", query)
     except Exception as e:
         logger.warning(f"[/chat] failed to save user message: {e}")
 
-    # Step 1: translate query to English
+    # Step 1: translate query to English (if not already English)
     english_query = query
     if lang != "en":
         try:
             english_query = translator.translate(query, src_lang=lang, tgt_lang="en")
-            logger.info(f"[/chat] translated query: {english_query!r}")
+            logger.info(f"[/chat] translated query to EN: {english_query!r}")
         except Exception as e:
-            logger.exception("[/chat] translation failed")
+            logger.exception("[/chat] query translation failed")
             return {
                 "answer": f"Translation error: {e}",
                 "citations": [],
@@ -261,7 +266,7 @@ async def process_grounded_query(
         logger.exception("[/chat] generate_answer failed")
         raise HTTPException(500, f"Generation failed: {e}")
 
-    # ---- None guard (correctly indented at function level) ----
+    # None guard
     if execution_payload is None:
         logger.error("[/chat] rag_engine.generate_answer returned None")
         english_answer = "Information not located in document archives."
@@ -270,7 +275,7 @@ async def process_grounded_query(
         english_answer = execution_payload.get("answer", "")
         citations = execution_payload.get("citations", [])
 
-    # Step 4: translate answer back to user's language
+    # Step 4: translate answer back to user's language (if not English)
     final_answer = english_answer
     if lang != "en" and english_answer:
         try:
@@ -280,11 +285,11 @@ async def process_grounded_query(
                 tgt_lang=lang,
                 protect_citations=True,
             )
-            logger.info(f"[/chat] translated answer to {lang}")
+            logger.info(f"[/chat] translated answer back to {lang}")
         except Exception as e:
             logger.exception(f"[/chat] answer translation FAILED: {e}")
     else:
-        logger.info(f"[/chat] skipping translation (lang={lang})")
+        logger.info(f"[/chat] skipping answer translation (lang={lang})")
 
     # Step 5: persist assistant response
     try:
@@ -301,21 +306,6 @@ async def process_grounded_query(
         "retrieved_sources": matched_contexts,
         "session_id": session_id,
     }
-
-
-@app.exception_handler(Exception)
-async def debug_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Global handler: {type(exc).__name__}: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": type(exc).__name__,
-            "detail": str(exc),
-            "trace": traceback.format_exc(),
-        },
-    )
-
-
 # ---------------- Debug endpoints ----------------
 
 @app.get("/api/v1/debug/index-stats")
@@ -352,6 +342,17 @@ async def debug_search(q: str, limit: int = 5):
     except Exception as e:
         return {"error": str(e)}
 
+@app.get("/api/v1/debug/section-map")
+async def section_map():
+    """Debug: inspect the in-memory section map."""
+    if not hasattr(vector_manager, "_section_map"):
+        return {"exists": False, "reason": "Attribute not set — index_document never ran"}
+    sm = vector_manager._section_map
+    return {
+        "exists": True,
+        "num_keys": len(sm),
+        "keys_sample": sorted(sm.keys())[:50],
+    } 
 
 @app.get("/api/v1/debug/list-sections")
 async def list_sections():
@@ -385,27 +386,35 @@ async def debug_reindex():
     if not os.path.exists(pdf_path):
         return {"error": f"File not found: {pdf_path}"}
 
+    # FORCE delete — no silent fallback
     try:
         vector_manager.client.delete_collection(
             collection_name=vector_manager.collection_name
         )
-        print(f"[reindex] deleted collection via client")
-    except Exception as e1:
-        print(f"[reindex] client.delete_collection failed: {e1}")
-        try:
-            vector_manager.client.close()
-            import shutil
-            db_dir = str(vector_manager.client._client.location)
-            vector_manager.client = None
-            shutil.rmtree(db_dir, ignore_errors=True)
-            from qdrant_client import QdrantClient
-            vector_manager.client = QdrantClient(path=db_dir)
-            print(f"[reindex] folder-level delete succeeded")
-        except Exception as e2:
-            print(f"[reindex] fallback failed: {e2}")
-            return {"error": f"both deletes failed: {e1} / {e2}"}
+        print(f"[reindex] DELETED collection {vector_manager.collection_name}")
+    except Exception as e:
+        print(f"[reindex] delete_collection failed: {e}")
+        return {"error": f"Could not delete collection: {e}"}
 
+    # Verify it's actually gone
+    try:
+        vector_manager.client.get_collection(vector_manager.collection_name)
+        return {"error": "Collection still exists after delete — DB is locked"}
+    except Exception:
+        print(f"[reindex] confirmed collection is gone")
+
+    # Recreate
     vector_manager._ensure_collection()
+    print(f"[reindex] recreated collection {vector_manager.collection_name}")
+
+    # Reset section map and BM25 cache
+    if hasattr(vector_manager, "_section_map"):
+        vector_manager._section_map = {}
+    if hasattr(vector_manager, "_bm25"):
+        vector_manager._bm25 = None
+        vector_manager._bm25_ids = []
+        vector_manager._bm25_payloads = []
+
     with open(pdf_path, "rb") as f:
         file_bytes = f.read()
     parsed = await DocumentProcessor.extract_layout_and_text(
@@ -413,7 +422,6 @@ async def debug_reindex():
     )
     await vector_manager.index_document("debug-reindex", parsed)
     return {"status": "ok", "pages": len(parsed)}
-
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)

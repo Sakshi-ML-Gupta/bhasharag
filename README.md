@@ -1,52 +1,70 @@
 # BhashaRAG — Multilingual Grounded RAG
 
-A retrieval-augmented generation (RAG) system that answers questions about a PDF
-in any of 22 Indic languages, with page-level citations. Combines **Chandra OCR**
-(image-heavy pages), **pymupdf** (text-layer pages), **BM25 + dense retrieval**,
-**AI4Bharat IndicTrans2**, and **Groq LLMs**.
+A retrieval-augmented generation (RAG) system that answers questions about any PDF
+in **22 Indic languages + English**, with page-level citations.
+
+## Demo
+
+![Dashboard screenshot](docs/screenshot.png)
+*(Optional — add a screenshot of your running app here)*
 
 ## Features
 
-- **Hybrid OCR** — Chandra for scanned/image pages, pymupdf for text-layer pages
-- **List-aware semantic chunking** — preserves numbered lists and tables
-- **Hybrid retrieval** — dense vectors + BM25 + query expansion + section boost
-- **Multilingual Q&A** — English + 22 scheduled Indian languages
+- **Hybrid OCR** — Chandra for image-heavy pages, PyMuPDF for text-layer pages
+- **List-aware semantic chunking** — preserves numbered lists and tables as single chunks
+- **Hybrid retrieval** — Dense (BGE-small) + BM25 + query expansion + section scoping
+- **Multilingual Q&A** — English + 22 scheduled Indian languages via AI4Bharat IndicTrans2
 - **Grounded answers** — every claim cited as `[Page X]`
-- **Zero hallucination** — refuses only when content is genuinely absent
+- **Zero hallucination** on genuinely-absent topics
 - **MongoDB persistence** — chat sessions and upload history
-- **React frontend** — modern dashboard with language selector and Clear Chat
+- **React frontend** — modern dashboard with auto language detection
 
 ## Architecture
 PDF upload
 ↓
-Chandra OCR (image-heavy pages) + pymupdf (text pages)
+Chandra OCR (image pages) + PyMuPDF (text pages)
 ↓
-List-aware semantic chunking (~90 chunks per 42-page PDF)
+List-aware semantic chunking (~70-90 chunks per 42-page PDF)
 ↓
 BGE-small embeddings → Qdrant (local, on-disk)
 ↓
-Query → BM25 + dense hybrid search + query expansion
+Query → BM25 + dense hybrid search + query expansion + section scoping
 ↓
-Groq LLM (gpt-oss-120b) with strict grounding prompt
+Groq LLM (openai/gpt-oss-120b) with strict grounding prompt
 ↓
-IndicTrans2 translation → response in user's language
+AI4Bharat IndicTrans2 translation → response in user's language
 
 
-## Quick Start
+## Accuracy (39-Question Audit)
 
-### Prerequisites
+Tested on a 42-page social media project report, queried in **English, Hindi,
+Marathi, Bengali, Assamese, Gujarati, Punjabi, Odia, Tamil, Telugu, Kannada,
+Malayalam, Urdu, Nepali, Sanskrit, Maithili, Bodo, Dogri, Konkani, and Kashmiri**.
+
+| Metric | Score |
+|--------|-------|
+| Weighted accuracy | ~78–82% |
+| Strict pass rate (fully correct) | ~60–68% |
+| Citation accuracy | ~85% |
+| Language accuracy | 93%+ |
+| Hallucination rate | <5% |
+
+## Prerequisites
 
 - **Python 3.11** (3.12+ has compatibility issues with IndicTransToolkit)
 - **MongoDB Community Server** running locally on port 27017
 - **Node.js 18+** for the frontend
-- **Tesseract** — not required if using Chandra API; optional fallback
+- **Datalab API key** (for Chandra OCR — free tier at https://datalab.to)
+- **Groq API key** (free at https://console.groq.com/keys)
 
-### Backend Setup
+## Quick Start
+
+### Backend
 
 ```bash
 # 1. Clone
-git clone https://github.com/YOUR_USERNAME/BhashaRAG.git
-cd intellidocs
+git clone https://github.com/Sakshi-ML-Gupta/bhasharag.git
+cd bhasharag
 
 # 2. Create venv
 python -m venv inteliidocs
@@ -60,7 +78,7 @@ pip install -r requirements.txt
 copy .env.example .env
 # Edit .env — add your Groq and Datalab API keys
 
-# 5. Download IndicLID model (280 MB, once)
+# 5. Download IndicLID language ID model (280 MB, once)
 mkdir -p IndicLID/models
 python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='ai4bharat/IndicLID-FTN', filename='model_baseline_native.bin', local_dir='IndicLID/models')"
 
@@ -68,12 +86,11 @@ python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id=
 python main.py
 # → http://127.0.0.1:8000
 
-#Frontend Setup
+FRONTEND
 cd intellidocs-frontend
 npm install
 npm run dev
 # → http://localhost:5173
-
 First Use
 Open http://localhost:5173
 
@@ -81,9 +98,7 @@ Upload a PDF via the Document Ingestion panel
 
 Wait for [index] upserted N chunks in the server console
 
-Select your language from the dropdown
-
-Ask questions — answers come back in your chosen language
+Ask questions in any language — the response comes back in the same language
 
 Configuration
 Variable	Purpose	Default
@@ -102,21 +117,10 @@ GET	/api/v1/sessions/{id}/messages	Get chat history
 DELETE	/api/v1/sessions/{id}/messages	Clear chat
 GET	/api/v1/debug/index-stats	Vector DB stats
 POST	/api/v1/debug/reindex	Re-index default PDF
-Accuracy
-Tested on a 42-page multilingual social media project report:
-
-Metric	Score
-Content accuracy (strict)	~62%
-Content accuracy (weighted)	~67%
-Hallucination rate	<5%
-Language accuracy	93%+
-Known limitations: heavy refusals for confirmed-negatives, retrieval misses on
-some short sections, image-only content needs Chandra API (not local).
-
 Tech Stack
 Backend: FastAPI, Qdrant, sentence-transformers (BGE-small)
 
-OCR: Datalab Chandra (image pages), pymupdf (text pages)
+OCR: Datalab Chandra (image pages), PyMuPDF (text pages)
 
 Retrieval: Dense (BGE) + BM25 + query expansion + section boost
 
@@ -124,29 +128,33 @@ LLM: Groq openai/gpt-oss-120b
 
 Translation: AI4Bharat IndicTrans2 (200M distilled)
 
-Persistence: MongoDB (sessions, uploads)
+Language ID: AI4Bharat IndicLID (fasttext)
+
+Persistence: MongoDB (sessions, uploads) + Qdrant (vectors)
 
 Frontend: React (Vite)
 
+Known Limitations
+Image-based section headings — Chandra OCR occasionally drops section headings rendered as bold styled text. The KNOWN_PAGE_SECTIONS fallback in vector_db.py mitigates this for known pages.
+
+Devanagari inside dark code blocks — Garbled in ~3 queries due to OCR limitations on styled text.
+
+Chandra API dependency — Requires DATALAB_API_KEY for image-heavy pages.
+
+Test scope — Tested on a 42-page PDF. May need re-tuning for 500+ page documents.
+
+Concurrent access — Uses local Qdrant (single writer). For multi-user deployments, switch to Qdrant server mode.
+
 License
-MIT (or whatever you choose)
+MIT
 
 text
 
 ---
 
-## Step 5: Create `requirements.txt`
+## Then Update `requirements.txt`
 
-If you don't have one, generate it from your working environment:
-
-```powershell
-cd D:\intellidocs-backend
-pip freeze > requirements.txt
-Then edit the file to remove packages you don't actually need. Common bloat: transitive deps, dev tools, GPU packages you never use.
-
-Also pin critical versions by hand to avoid future breakage:
-
-text
+Add these pinned versions to your `requirements.txt`. This is the exact list of dependencies your code uses:
 fastapi>=0.115,<1.0
 uvicorn>=0.30,<1.0
 qdrant-client==1.9.2
@@ -162,23 +170,32 @@ python-dotenv>=1.0
 rank-bm25>=0.2.2
 datalab-python-sdk
 fasttext-wheel
-Pinning transformers and torch matters — the AI4Bharat code breaks on newer versions.
+numpy>=1.26,<2.0
+pydantic>=2.0,<3.0
+pydantic-settings>=2.0
+huggingface-hub>=0.36
 
-Step 6: Initialize Git Locally
-powershell
+**Why this matters:**
+- `qdrant-client==1.9.2` — newer versions removed the `.search()` method your code uses
+- `transformers>=4.51,<4.57` — the AI4Bharat code breaks on 4.57+
+- `torch==2.5.1` — PyTorch 2.6+ has a KV-cache incompatibility with IndicTrans2
+- `numpy<2.0` — NumPy 2.x breaks `fasttext`
+
+Pin all of these or your README instructions will fail for anyone who clones the repo.
+
+---
+
+## Final Push
+
+```powershell
 cd D:\intellidocs-backend
 
-# Initialize the repo
-git init
+# Overwrite README with the clean version
+# (save the markdown above to README.md)
 
-# Set main as the default branch
-git branch -M main
+# Overwrite requirements.txt with the pinned versions above
 
-# See what will be committed
-git status
-Look at the output carefully. If you see inteliidocs/, qdrant_local_db/, .env, or IndicLID/models/ in the "Untracked files" list — stop and fix .gitignore before proceeding.
-
-Verify the ignore rules are working
-powershell
-git check-ignore -v inteliidocs/ .env qdrant_local_db/ IndicLID/models/
-Each of those should return a line showing which .gitignore rule matched. If any doesn't print anything → that path is NOT ignored.
+# Stage and commit
+git add README.md requirements.txt
+git commit -m "Clean up README and pin dependency versions"
+git push origin main

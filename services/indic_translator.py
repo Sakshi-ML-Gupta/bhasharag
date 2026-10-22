@@ -119,7 +119,7 @@ class IndicTranslator:
         placeholders = {}
 
         def repl(m):
-            key = f"CITATIONMARKER{len(placeholders)}X"
+            key = f"[[[[{len(placeholders)}]]]]"
             placeholders[key] = m.group(0)
             return key
 
@@ -233,37 +233,87 @@ class IndicTranslator:
 
     # ---------------- Language detection ----------------
 
+        def detect_language(self, text: str) -> str:
+            """
+            Detect language using IndicLID. Falls back to script-based detection.
+            """
+            if not text:
+                return "en"
+
+        # 1. Try IndicLID (highly accurate)
+            if self.lid_model is not None:
+                try:
+                    labels, scores = self.lid_model.predict(text.replace("\n", " "), k=1)
+                    label = labels[0].replace("__label__", "")
+                    iso = FLORES_TO_ISO.get(label, "en")
+                    # If confidence is very low, fallback to script check
+                    if scores[0] > 0.4: 
+                        print(f"[LID] IndicLID: {label} -> {iso} (conf={scores[0]:.2f})")
+                        return iso
+                except Exception as e:
+                    print(f"[LID] IndicLID failed: {e} — falling back to script detection")
+
+        # 2. Fallback: Script-based detection (handles pure Hindi, Tamil, etc.)
+            for ch in text:
+                code = ord(ch)
+                if 0x0900 <= code <= 0x097F: return "hi" # Devanagari
+                if 0x0980 <= code <= 0x09FF: return "bn" # Bengali
+                if 0x0A00 <= code <= 0x0A7F: return "pa" # Gurmukhi
+                if 0x0A80 <= code <= 0x0AFF: return "gu" # Gujarati
+                if 0x0B00 <= code <= 0x0B7F: return "or" # Odia
+                if 0x0B80 <= code <= 0x0BFF: return "ta" # Tamil
+                if 0x0C00 <= code <= 0x0C7F: return "te" # Telugu
+                if 0x0C80 <= code <= 0x0CFF: return "kn" # Kannada
+                if 0x0D00 <= code <= 0x0D7F: return "ml" # Malayalam
+                if 0x0600 <= code <= 0x06FF: return "ur" # Arabic/Urdu
+        
+        # 3. Default to English
+            return "en"
+    # ---------------- Language detection ----------------
+
     def detect_language(self, text: str) -> str:
         """
-        Detect language using IndicLID (if loaded), else script-based fallback.
+        Detect the input language.
+        Uses IndicLID if available, otherwise falls back to script-based detection.
+        Defaults to English.
         """
-        if not text:
+        if not text or not text.strip():
             return "en"
 
-        if self.lid_model is not None:
+        # 1. Try IndicLID (fasttext model, high accuracy)
+        if getattr(self, "lid_model", None) is not None:
             try:
-                labels, scores = self.lid_model.predict(text.replace("\n", " "), k=1)
+                labels, scores = self.lid_model.predict(
+                    text.replace("\n", " ").strip(), k=1
+                )
                 label = labels[0].replace("__label__", "")
                 iso = FLORES_TO_ISO.get(label, "en")
-                print(f"[LID] IndicLID: {label} -> {iso} (conf={scores[0]:.2f})")
-                return iso
-            except Exception as e:
-                print(f"[LID] IndicLID failed: {e} — falling back to script detection")
 
+                # Reject low-confidence predictions
+                if float(scores[0]) >= 0.40:
+                    print(f"[LID] IndicLID: {label} -> {iso} (conf={scores[0]:.2f})")
+                    return iso
+                else:
+                    print(f"[LID] Low confidence ({scores[0]:.2f}) for {label}, using script fallback")
+            except Exception as e:
+                print(f"[LID] IndicLID failed: {e} — using script fallback")
+
+        # 2. Script-based detection (fallback)
         for ch in text:
             code = ord(ch)
-            if 0x0900 <= code <= 0x097F: return "hi"
-            if 0x0980 <= code <= 0x09FF: return "bn"
-            if 0x0A00 <= code <= 0x0A7F: return "pa"
-            if 0x0A80 <= code <= 0x0AFF: return "gu"
-            if 0x0B00 <= code <= 0x0B7F: return "or"
-            if 0x0B80 <= code <= 0x0BFF: return "ta"
-            if 0x0C00 <= code <= 0x0C7F: return "te"
-            if 0x0C80 <= code <= 0x0CFF: return "kn"
-            if 0x0D00 <= code <= 0x0D7F: return "ml"
-            if 0x0600 <= code <= 0x06FF: return "ur"
-        return "en"
+            if 0x0900 <= code <= 0x097F: return "hi"   # Devanagari
+            if 0x0980 <= code <= 0x09FF: return "bn"   # Bengali
+            if 0x0A00 <= code <= 0x0A7F: return "pa"   # Gurmukhi
+            if 0x0A80 <= code <= 0x0AFF: return "gu"   # Gujarati
+            if 0x0B00 <= code <= 0x0B7F: return "or"   # Odia
+            if 0x0B80 <= code <= 0x0BFF: return "ta"   # Tamil
+            if 0x0C00 <= code <= 0x0C7F: return "te"   # Telugu
+            if 0x0C80 <= code <= 0x0CFF: return "kn"   # Kannada
+            if 0x0D00 <= code <= 0x0D7F: return "ml"   # Malayalam
+            if 0x0600 <= code <= 0x06FF: return "ur"   # Arabic/Urdu
 
+        # 3. Default to English
+        return "en"
     # ---------------- Script helpers ----------------
 
     def _is_devanagari(self, text: str) -> bool:

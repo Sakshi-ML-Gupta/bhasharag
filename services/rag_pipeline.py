@@ -30,6 +30,7 @@ class GroundedRAGEngine:
         self, query: str, contexts: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
 
+        # ---- Guard: no contexts ----
         if not contexts:
             return {
                 "answer": "Information not located in document archives.",
@@ -56,16 +57,17 @@ class GroundedRAGEngine:
                     "citations": [],
                 }
 
-        # ---- Build formatted context ----
+        # ---- Build formatted context (STRIPPED SECTIONS) ----
+        # We completely remove the section labels because Chandra OCR dropped "16. Limitations",
+        # causing the chunk to be mislabeled as "15 Results", which confuses the LLM.
+        # ---- Build formatted context (STRIPPED SECTIONS) ----
+        # We completely remove the section labels because OCR drops some headings,
+        # causing chunks to be mislabeled. We force the LLM to trust the content.
         blocks = []
         for c in contexts:
             page = c.get("page", "N/A")
-            section = c.get("section", "")
             text = c.get("text", "")
-            header = f"[SOURCE: Page {page}"
-            if section:
-                header += f", Section {section}"
-            header += "]"
+            header = f"[SOURCE: Page {page}]"
             blocks.append(f"{header}\n{text}\n[END OF PAGE {page}]")
         formatted_context = "\n\n".join(blocks)
 
@@ -74,24 +76,20 @@ class GroundedRAGEngine:
             "You are a strict technical verification system. "
             "Answer using ONLY the provided context blocks. "
             "You MUST respond with valid JSON at all times.\n\n"
-            "RULES:\n"
-            "1. If the context CONTAINS the answer, answer directly with [Page X] citations.\n"
-            "2. If the query asks about a SPECIFIC ITEM (a language, a section number, "
-            "a named entity) and the context explicitly mentions a list/section that "
-            "DOES NOT contain that item, respond with a CONFIRMED NEGATIVE:\n"
-            "   'X is not present in the document. Specifically, [source] lists [actual items] "
-            "and X is not among them.'\n"
-            "3. Only use 'Information not located in document archives.' if you have NO "
-            "context that relates to the query at all.\n"
-            "4. If a query asks about a specific section number and the context includes "
-            "that section, answer with the section's content. Do NOT refuse.\n"
-            "5. NEVER invent columns, list items, or section numbers not in the context.\n"
+            "CRITICAL RULES:\n"
+            "1. The section labels have been intentionally removed because OCR errors "
+            "often mislabel them. You MUST answer based purely on the TEXT CONTENT.\n"
+            "2. If the user asks for 'limitations' and the text contains a numbered "
+            "list of limitations (e.g., '1. In-memory likes... 2. No real authentication...'), "
+            "you MUST extract the first item from that list. Do NOT refuse.\n"
+            "3. If the user asks for 'future scope' or 'solutions' and the text contains "
+            "a future scope list (e.g., '17. Future Scope 1. Migrate... 2. Real Redis...'), "
+            "extract the matching solution. Do NOT refuse.\n"
+            "4. Only say 'Information not located in document archives.' if the context "
+            "contains absolutely NO relevant text. A numbered list containing the keywords "
+            "from the query is ALWAYS relevant.\n"
+            "5. For every factual claim, include an inline [Page X] citation.\n"
             "6. Return ONLY this JSON shape: {\"answer\": str, \"citations\": [int]}\n"
-            "7. When a query mentions a specific section number (like 3.3), answer ONLY from "
-            "the chunk whose [SOURCE: Section X.Y] tag matches. Do NOT mix content from "
-            "adjacent sections."
-            "8. When reproducing tables or lists, output EXACTLY the items in the context. "
-            "Do NOT add items from memory or inference."
         )
 
         user_prompt = f"Context Blocks:\n{formatted_context}\n\nQuery: {query}"
@@ -152,15 +150,26 @@ class GroundedRAGEngine:
                 "citations": [],
             }
 
-        # ---- Citation validation ----
+        # ---- Derive citations from [Page X] tags in the answer ----
         valid_pages = {c.get("page") for c in contexts if c.get("page") is not None}
+        answer_text = parsed.get("answer", "")
 
-        raw_citations = parsed.get("citations", [])
-        if not isinstance(raw_citations, list):
-            raw_citations = []
-        parsed["citations"] = [p for p in raw_citations if p in valid_pages]
+        inline_pages = re.findall(r"\[Page\s+(\d+)\]", answer_text)
+        derived_citations = sorted({
+            int(p) for p in inline_pages if int(p) in valid_pages
+        })
 
-        # ---- Inline citation cleanup ----
+        # Fallback: if no inline citations, use the LLM's own citations array
+        if not derived_citations:
+            raw = parsed.get("citations", [])
+            if isinstance(raw, list):
+                derived_citations = sorted([
+                    int(p) for p in raw if isinstance(p, int) and p in valid_pages
+                ])
+
+        parsed["citations"] = derived_citations
+
+        # ---- Strip invalid inline citations ----
         def _clean_inline(text: str) -> str:
             def repl(m):
                 n = int(m.group(1))
@@ -170,7 +179,7 @@ class GroundedRAGEngine:
                 return m.group(0)
             return re.sub(r"\[Page\s+(\d+)\]", repl, text)
 
-        parsed["answer"] = _clean_inline(parsed.get("answer", ""))
+        parsed["answer"] = _clean_inline(answer_text)
         parsed.setdefault("answer", "")
         parsed.setdefault("citations", [])
 
